@@ -1,0 +1,13 @@
+{
+  "type": "module",
+  "dependencies": {
+    "@vulpemventures/secp256k1-zkp": "^3.2.1",
+    "axios": "^1.6.7",
+    "bitcoinjs-lib": "^6.1.5",
+    "bolt11": "^1.4.1",
+    "boltz-core": "^2.1.1",
+    "ecpair": "^2.1.0",
+    "tiny-secp256k1": "^2.2.3",
+    "ws": "^8.16.0"
+  }
+}
