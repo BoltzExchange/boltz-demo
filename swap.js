@@ -52,7 +52,11 @@ const reverseSwap = async () => {
   ).data;
 
   console.log("Created swap");
-  console.log(createdResponse);
+  console.log(JSON.stringify({
+    id: createdResponse.id,
+    onchainAmount: createdResponse.onchainAmount,
+    invoice: createdResponse.invoice,
+  }, undefined, 2));
   console.log();
 
   // Create a WebSocket and subscribe to updates for the created swap
@@ -73,8 +77,11 @@ const reverseSwap = async () => {
       return;
     }
 
+    console.log();
+    console.log("-----");
     console.log("Got WebSocket update");
-    console.log(msg);
+    console.log(JSON.stringify(msg.args[0], undefined, 2));
+    console.log("-----");
     console.log();
 
     switch (msg.args[0].status) {
@@ -86,8 +93,6 @@ const reverseSwap = async () => {
 
       // "transaction.mempool" means that Boltz send an onchain transaction
       case "transaction.mempool": {
-        console.log("Creating claim transaction");
-
         const boltzPublicKey = Buffer.from(
           createdResponse.refundPublicKey,
           "hex"
@@ -105,13 +110,15 @@ const reverseSwap = async () => {
 
         // Parse the lockup transaction and find the output relevant for the swap
         const lockupTx = Transaction.fromHex(msg.args[0].transaction.hex);
-        console.log(`Got lockup transaction ${lockupTx.getId()}`);
+        console.log(`Got lockup transaction: ${lockupTx.getId()}`);
 
         const swapOutput = detectSwap(tweakedKey, lockupTx);
         if (swapOutput === undefined) {
           console.error("No swap output found in lockup transaction");
           return;
         }
+
+        console.log("Creating claim transaction");
 
         // Create a claim transaction to be signed cooperatively via a key path spend
         const claimTx = targetFee(2, (fee) =>
@@ -175,13 +182,13 @@ const reverseSwap = async () => {
         await axios.post(`${endpoint}/v2/chain/BTC/transaction`, {
           hex: claimTx.toHex(),
         });
-        console.log(`Broadcast claim transaction: ${claimTx.getId()}`);
 
         break;
       }
 
       case "invoice.settled":
-        console.log("Swap successful");
+        console.log();
+        console.log("Swap successful!");
         webSocket.close();
         break;
     }
