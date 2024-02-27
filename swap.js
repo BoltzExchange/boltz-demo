@@ -88,7 +88,94 @@ const reverseSwap = async () => {
       case "transaction.mempool": {
         console.log("Creating claim transaction");
 
-        // TODO: imeplement me
+        const boltzPublicKey = Buffer.from(
+          createdResponse.refundPublicKey,
+          "hex"
+        );
+
+        // Create a musig signing session and tweak it with the Taptree of the swap scripts
+        const musig = new Musig(await zkpInit.default(), keys, randomBytes(32), [
+          boltzPublicKey,
+          keys.publicKey,
+        ]);
+        const tweakedKey = TaprootUtils.tweakMusig(
+          musig,
+          SwapTreeSerializer.deserializeSwapTree(createdResponse.swapTree).tree
+        );
+
+        // Parse the lockup transaction and find the output relevant for the swap
+        const lockupTx = Transaction.fromHex(msg.args[0].transaction.hex);
+        console.log(`Got lockup transaction ${lockupTx.getId()}`);
+
+        const swapOutput = detectSwap(tweakedKey, lockupTx);
+        if (swapOutput === undefined) {
+          console.error("No swap output found in lockup transaction");
+          return;
+        }
+
+        // Create a claim transaction to be signed cooperatively via a key path spend
+        const claimTx = targetFee(2, (fee) =>
+          constructClaimTransaction(
+            [
+              {
+                ...swapOutput,
+                keys,
+                preimage,
+                cooperative: true,
+                type: OutputType.Taproot,
+                txHash: lockupTx.getHash(),
+              },
+            ],
+            address.toOutputScript(destinationAddress, network),
+            fee
+          )
+        );
+
+        // Get the partial signature from Boltz
+        const boltzSig = (
+          await axios.post(
+            `${endpoint}/v2/swap/reverse/${createdResponse.id}/claim`,
+            {
+              index: 0,
+              transaction: claimTx.toHex(),
+              preimage: preimage.toString("hex"),
+              pubNonce: Buffer.from(musig.getPublicNonce()).toString("hex"),
+            }
+          )
+        ).data;
+
+        // Aggregate the nonces
+        musig.aggregateNonces([
+          [boltzPublicKey, Buffer.from(boltzSig.pubNonce, "hex")],
+        ]);
+
+        // Initialize the session to sign the claim transaction
+        musig.initializeSession(
+          claimTx.hashForWitnessV1(
+            0,
+            [swapOutput.script],
+            [swapOutput.value],
+            Transaction.SIGHASH_DEFAULT
+          )
+        );
+
+        // Add the partial signature from Boltz
+        musig.addPartial(
+          boltzPublicKey,
+          Buffer.from(boltzSig.partialSignature, "hex")
+        );
+
+        // Create our partial signature
+        musig.signPartial();
+
+        // Witness of the input to the aggregated signature
+        claimTx.ins[0].witness = [musig.aggregatePartials()];
+
+        // Broadcast the finalized transaction
+        await axios.post(`${endpoint}/v2/chain/BTC/transaction`, {
+          hex: claimTx.toHex(),
+        });
+        console.log(`Broadcast claim transaction: ${claimTx.getId()}`);
 
         break;
       }
