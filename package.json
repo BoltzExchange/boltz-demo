@@ -7,6 +7,7 @@
     "bolt11": "^1.4.1",
     "boltz-core": "^2.1.1",
     "ecpair": "^2.1.0",
+    "liquidjs-lib": "^6.0.2-liquid.35",
     "tiny-secp256k1": "^2.2.3",
     "ws": "^8.16.0"
   }

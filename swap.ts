@@ -4,18 +4,20 @@ import {
   Transaction,
   address,
   crypto,
-  initEccLib,
   networks,
-} from "bitcoinjs-lib";
+} from "liquidjs-lib";
 import {
   Musig,
   OutputType,
   SwapTreeSerializer,
-  TaprootUtils,
-  constructClaimTransaction,
   detectSwap,
   targetFee,
 } from "boltz-core";
+import {
+  TaprootUtils,
+  constructClaimTransaction,
+  init,
+} from 'boltz-core/dist/lib/liquid';
 import { randomBytes } from "crypto";
 import { ECPairFactory } from "ecpair";
 import * as ecc from "tiny-secp256k1";
@@ -29,12 +31,12 @@ const invoiceAmount = 50_000;
 
 // Address to which the swap should be claimed
 const destinationAddress =
-  "tb1pfjh36n5ksntze6dnzlexy2slda4uzx5z7pkrrs8shnd3k9hrtnss7dwgwh";
+  "tlq1qq299dd54j2vr8t3uk94z72393xlyvfwn8k9r6klm3e2y6fyxgfx6uezfgyrkemcn4cn88pqf6c700p3mhqwd667uhep57l8ey";
 
 const network = networks.testnet;
 
 const reverseSwap = async () => {
-  initEccLib(ecc);
+  init(await zkpInit());
 
   // Create a random preimage for the swap; has to have a length of 32 bytes
   const preimage = randomBytes(32);
@@ -44,7 +46,7 @@ const reverseSwap = async () => {
   const createdResponse = (
     await axios.post(`${endpoint}/v2/swap/reverse`, {
       invoiceAmount,
-      to: "BTC",
+      to: "L-BTC",
       from: "BTC",
       claimPublicKey: keys.publicKey.toString("hex"),
       preimageHash: crypto.sha256(preimage).toString("hex"),
@@ -52,15 +54,11 @@ const reverseSwap = async () => {
   ).data;
 
   console.log("Created swap");
-  console.log(JSON.stringify({
-    id: createdResponse.id,
-    onchainAmount: createdResponse.onchainAmount,
-    invoice: createdResponse.invoice,
-  }, undefined, 2));
+  console.log(createdResponse);
   console.log();
 
   // Create a WebSocket and subscribe to updates for the created swap
-  const webSocket = new ws(`${endpoint.replace("http://", "ws://")}/v2/ws`);
+  const webSocket = new ws(`${endpoint.replace("https://", "wss://")}/v2/ws`);
   webSocket.on("open", () => {
     webSocket.send(
       JSON.stringify({
@@ -99,7 +97,7 @@ const reverseSwap = async () => {
         );
 
         // Create a musig signing session and tweak it with the Taptree of the swap scripts
-        const musig = new Musig(await zkpInit.default(), keys, randomBytes(32), [
+        const musig = new Musig(await zkpInit(), keys, randomBytes(32), [
           boltzPublicKey,
           keys.publicKey,
         ]);
@@ -131,10 +129,17 @@ const reverseSwap = async () => {
                 cooperative: true,
                 type: OutputType.Taproot,
                 txHash: lockupTx.getHash(),
+                blindingPrivateKey: Buffer.from(
+                  createdResponse.blindingKey,
+                  "hex"
+                ),
               },
             ],
             address.toOutputScript(destinationAddress, network),
-            fee
+            fee,
+            true,
+            network,
+            address.fromConfidential(destinationAddress).blindingKey
           )
         );
 
@@ -161,8 +166,9 @@ const reverseSwap = async () => {
           claimTx.hashForWitnessV1(
             0,
             [swapOutput.script],
-            [swapOutput.value],
-            Transaction.SIGHASH_DEFAULT
+            [{ asset: swapOutput.asset, value: swapOutput.value, }],
+            Transaction.SIGHASH_DEFAULT,
+            network.genesisBlockHash,
           )
         );
 
@@ -179,7 +185,7 @@ const reverseSwap = async () => {
         claimTx.ins[0].witness = [musig.aggregatePartials()];
 
         // Broadcast the finalized transaction
-        await axios.post(`${endpoint}/v2/chain/BTC/transaction`, {
+        await axios.post(`${endpoint}/v2/chain/L-BTC/transaction`, {
           hex: claimTx.toHex(),
         });
 
